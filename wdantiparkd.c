@@ -233,6 +233,7 @@ int wdAntiParkRun(struct wdAntiParkConfig *config)
 					timeoutCountBegin = time(NULL);
 					stateTimeBegin = time(NULL);
 					state = AntiPark;
+					continue;
 				} else {
 					if((time(NULL) - timeoutCountBegin) > config->parkedTimeout) {
 						if(config->verbose) {
