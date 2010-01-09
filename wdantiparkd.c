@@ -3,7 +3,7 @@
 	(C) 2010 Sound <sound ~at~ sagaforce -dot- com>
 
 	wdantiparkd
-    ===========
+	===========
 
 	wdantiparmd combines the idea of laptop-mode and hard drive touching
 	to help keep the power usage low while maintaining a more reasonable 
@@ -119,7 +119,7 @@ int readDiskStats(const char *disk,unsigned long *readSectorCount,unsigned long 
 	// read stats
 	int diskStatFp = open(statsPath,O_RDONLY);
 	if(diskStatFp < 0) {
-		fprintf(stderr,"Could not open block '%s' stats for reading.\n",disk);
+		fprintf(stderr,"Could not open '%s' stats for reading.\n",disk);
 		return -errno;
 	}
 	read(diskStatFp,statsLine,512);
@@ -389,13 +389,13 @@ int main(int argc,char *argv[])
 				printf("Options:\n");
 				printf(" -h, --help                     Display this help.\n");
 				printf(" -v, --verbose                  Be verbose.\n");
-				printf(" -d, --disk=DISK                Disk to monitor (default: sda)\n");
-				printf(" -i, --interval=SEC             Interval between generated disk activity (default: 7)\n");
-				printf(" -a, --antipark-timeout=SEC     Timeout for antipark (default: 60)\n");
-				printf(" -A, --antipark-timeout-max=SEC Timeout max for antipark (default: 300)\n");
-				printf(" -p, --park-timeout=SEC         Timeout for parked (default: 300)\n");
-				printf(" -t, --temp-file=FILE           File residing on disk to write to (default: /tmp/wdantiparkd.tmp)\n");
-				printf(" -z, --sync-before-idle         Sync disks before switching to IDLE (default: false)\n");
+				printf(" -d, --disk=DISK                Disk to monitor (default: %s)\n",config.disk);
+				printf(" -i, --interval=SEC             Interval between generated disk activity (default: %d)\n",config.interval);
+				printf(" -a, --antipark-timeout=SEC     Timeout for antipark (default: %d)\n",config.antiParkTimeout);
+				printf(" -A, --antipark-timeout-max=SEC Timeout max for antipark (default: %d)\n",config.antiParkTimeoutMax);
+				printf(" -p, --park-timeout=SEC         Timeout for parked (default: %d)\n",config.parkedTimeout);
+				printf(" -t, --temp-file=FILE           File residing on disk to write to (default: %s)\n",config.tempFile);
+				printf(" -z, --sync-before-idle         Sync disks before switching to IDLE (default: %s)\n",config.syncBeforeIdle ? "true" : "false");
 				return -1;
 		}
 	}
