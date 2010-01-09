@@ -87,8 +87,8 @@ static const char *formatSeconds(time_t secs,char *buffer,int max)
 
 	if(secs < 60) snprintf(buffer,max,"%lds",(long)secs);
 	else if(secs < 3600) snprintf(buffer,max,"%ldm %lds",(long)secs / 60,(long)secs % 60);
-	else if(secs < 86400) snprintf(buffer,max,"%ldh %ldm %lds",(long)secs / 3600,(long)secs / 60,(long)secs % 60);
-	else snprintf(buffer,max,"%ldd %ldh %ldm %lds",(long)secs / 86400,(long)secs / 3600,(long)secs / 60,(long)secs % 60);
+	else if(secs < 86400) snprintf(buffer,max,"%ldh %ldm %lds",(long)secs / 3600,(long)(secs / 60) % 60,(long)secs % 60);
+	else snprintf(buffer,max,"%ldd %ldh %ldm %lds",(long)secs / 86400,(long)(secs / 3600) % 24,(long)(secs / 60) % 60,(long)secs % 60);
 	buffer[max - 1] = 0;
 	return buffer;
 }
