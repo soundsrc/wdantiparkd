@@ -106,8 +106,13 @@ static const char *formatCurrentTime(char *buffer,int max)
 	return buffer;
 }
 
-int readDiskStats(const char *disk,unsigned long *readSectorCount,unsigned long *writeSectorCount)
+/*
+ Checks for disk activity since the last call to checkForDiskActivity()
+ */
+int checkForDiskActivity(const char *disk,int *haveReadAcitvity,int *haveWriteActivity)
 {
+	static unsigned long lastReadSectorCount = 0, lastWriteSectorCount = 0;
+	unsigned long readSectorCount, writeSectorCount;
 	char statsPath[256];
 	char statsLine[512];
 	char *value;
@@ -134,7 +139,7 @@ int readDiskStats(const char *disk,unsigned long *readSectorCount,unsigned long 
 		fprintf(stderr,"Failed to read I/O stats.\n");
 		return -1;
 	}
-	*readSectorCount = strtoul(value,NULL,10);
+	readSectorCount = strtoul(value,NULL,10);
 	
 	strtok(NULL," "); // write I/Os
 	strtok(NULL," "); // write merges
@@ -143,7 +148,13 @@ int readDiskStats(const char *disk,unsigned long *readSectorCount,unsigned long 
 		fprintf(stderr,"Failed to read I/O stats.\n");
 		return -1;
 	}
-	*writeSectorCount = strtoul(value,NULL,10);
+	writeSectorCount = strtoul(value,NULL,10);
+	
+	if(haveReadAcitvity) *haveReadAcitvity = readSectorCount != lastReadSectorCount;
+	if(haveWriteActivity) *haveWriteActivity = writeSectorCount != lastWriteSectorCount;
+	
+	lastReadSectorCount = readSectorCount;
+	lastWriteSectorCount = writeSectorCount;
 	
 	return 0;
 }
@@ -151,9 +162,9 @@ int readDiskStats(const char *disk,unsigned long *readSectorCount,unsigned long 
 // the loop that does it all
 int wdAntiParkRun(struct wdAntiParkConfig *config)
 {
-	unsigned long lastReadSectorCount = 0, lastWriteSectorCount = 0;
 	enum AntiParkState state = AntiPark;
 	time_t timeoutCountBegin, stateTimeBegin, antiParkStart, idleTime;
+	int llc = 0; // estimate llc
 	
 	// current antipark timeout
 	int antiParkTimeout = config->antiParkTimeout;
@@ -175,13 +186,9 @@ int wdAntiParkRun(struct wdAntiParkConfig *config)
 	// infinite loop
 	for(;;) {
 		int haveReadActivity, haveWriteActivity;
-		unsigned long readSectorCount, writeSectorCount;
 		
-		int err = readDiskStats(config->disk,&readSectorCount,&writeSectorCount);
-		if(err) return err;
-		
-		haveReadActivity = readSectorCount != lastReadSectorCount;
-		haveWriteActivity = writeSectorCount != lastWriteSectorCount;
+		// check for disk activity
+		checkForDiskActivity(config->disk,&haveReadActivity,&haveWriteActivity);
 		
 		switch(state) {
 			case AntiPark:
@@ -190,13 +197,13 @@ int wdAntiParkRun(struct wdAntiParkConfig *config)
 					timeoutCountBegin = time(NULL);
 				}
 				
+				// write some random data, and sync to keep head's unparked
 				int tmpFileFp = open(config->tempFile,O_WRONLY | O_TRUNC | O_CREAT,0600);
 				if(tmpFileFp < 0) {
 					fprintf(stderr,"Failed to open tmp file '%s' for writing.\n",config->tempFile);
 					return -errno;
 				}
-				// write some random data, and sync to keep head's unparked
-				write(tmpFileFp,&readSectorCount,4);
+				write(tmpFileFp,&antiParkStart,4);
 				close(tmpFileFp);
 				sync(); // force sync
 				
@@ -211,8 +218,10 @@ int wdAntiParkRun(struct wdAntiParkConfig *config)
 					sleep(1);
 
 					// sync stats
-					err = readDiskStats(config->disk,&readSectorCount,&writeSectorCount);
-					if(err) return err;
+					checkForDiskActivity(config->disk,NULL,NULL);
+					
+					// llc + 1
+					llc++;
 				}
 				break;
 			case Parked:
@@ -248,18 +257,15 @@ int wdAntiParkRun(struct wdAntiParkConfig *config)
 						state = Idle;
 						
 						if(config->syncBeforeIdle) {
-							
 							printf("[%s] Syncing disks.\n",formatCurrentTime(NULL,0));
 							// sync disk first
 							sync();
 							sleep(1);
 							
 							// sync stats
-							err = readDiskStats(config->disk,&readSectorCount,&writeSectorCount);
-							if(err) return err;
+							checkForDiskActivity(config->disk,NULL,NULL);
 							
-							lastReadSectorCount = readSectorCount;
-							lastWriteSectorCount = writeSectorCount;
+							llc++;
 						}
 						
 						// change states reset timers
@@ -279,12 +285,15 @@ int wdAntiParkRun(struct wdAntiParkConfig *config)
 					char timeoutStr[32], timeSpentStr[32];
 					time_t parkedTime = time(NULL) - stateTimeBegin;
 					time_t uptime = time(NULL) - antiParkStart;
+					int hours = (uptime / 3600);
+					int llc_per_hour = hours ? llc / hours : llc;
 					idleTime += parkedTime;
 					printf("[%s] Disk activity detected, switching out of IDLE state to ANTIPARK with timeout: %s. Time spent in IDLE: %s.\n",
 						   formatCurrentTime(NULL,0),formatSeconds(antiParkTimeout,timeoutStr,32),formatSeconds(parkedTime,timeSpentStr,32));
 					printf("[%s] Current stats - uptime: %s, ",formatCurrentTime(NULL,0),formatSeconds(uptime,NULL,0));
 					printf("idle time: %s, ",formatSeconds(idleTime,NULL,0));
-					printf("%% idle: %ld%%\n",idleTime * 100 / uptime);
+					printf("%% idle: %ld%%, ",idleTime * 100 / uptime);
+					printf("est. LLC/hr: %d\n",llc_per_hour);
 				}
 				
 				// change states reset timers
@@ -293,9 +302,6 @@ int wdAntiParkRun(struct wdAntiParkConfig *config)
 				state = AntiPark;
 				continue;
 		}
-		
-		lastReadSectorCount = readSectorCount;
-		lastWriteSectorCount = writeSectorCount;
 		
 		// sleep for interval seconds
 		sleep(config->interval);
