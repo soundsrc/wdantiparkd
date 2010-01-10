@@ -1,0 +1,2 @@
+#!/bin/sh
+echo "Running automake and friends..." && aclocal && automake -a && autoconf && echo "You may now do ./configure && make to build source."
