@@ -6,7 +6,7 @@ if [ ! -e /etc/default/wdantiparkd ]; then
 
 # enable or disable antiparkd
 
-WDANTIPARKD_ENABLE=true
+WDANTIPARKD_ENABLE=false
 
 
 # Additional options
