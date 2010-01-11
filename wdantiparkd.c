@@ -56,6 +56,8 @@
 #include <errno.h>
 #include <signal.h>
 #include <time.h>
+#include <pwd.h>
+#include <grp.h>
 
 // global parameters
 struct wdAntiParkConfig
@@ -76,6 +78,15 @@ enum AntiParkState
 	Parked,
 	Idle
 };
+
+static int terminateProgram = 0;
+static void signalHandler(int sig)
+{
+	if(sig == SIGINT || sig == SIGTERM) {
+		terminateProgram = 1;
+		printf("Shutting down, please wait..\n");
+	}
+}
 
 static const char *formatSeconds(time_t secs,char *buffer,int max)
 {
@@ -181,10 +192,11 @@ int wdAntiParkRun(struct wdAntiParkConfig *config)
 		printf("[%s]  AntiPark Timeout Max: %s\n",formatCurrentTime(NULL,0),formatSeconds(config->antiParkTimeoutMax,NULL,0));
 		printf("[%s]  Parked Timeout: %s\n",formatCurrentTime(NULL,0),formatSeconds(config->parkedTimeout,NULL,0));
 		printf("[%s]  Sync before IDLE: %s\n",formatCurrentTime(NULL,0),config->syncBeforeIdle ? "true" : "false");
+		fflush(stdout);
 	}
 	
 	// infinite loop
-	for(;;) {
+	while(!terminateProgram) {
 		int haveReadActivity, haveWriteActivity;
 		
 		// check for disk activity
@@ -210,6 +222,7 @@ int wdAntiParkRun(struct wdAntiParkConfig *config)
 				if((time(NULL) - timeoutCountBegin) > antiParkTimeout) {
 					if(config->verbose) {
 						printf("[%s] Switching state to PARKED. Time spent in ANTIPARK: %s.\n",formatCurrentTime(NULL,0),formatSeconds(time(NULL) - stateTimeBegin,NULL,0));
+						fflush(stdout);
 					}
 					timeoutCountBegin = time(NULL);
 					stateTimeBegin = time(NULL);
@@ -237,6 +250,7 @@ int wdAntiParkRun(struct wdAntiParkConfig *config)
 						idleTime += parkedTime;
 						printf("[%s] Disk activity detected, switching out of PARKED state to ANTIPARK with timeout: %s. Time spent in PARKED: %s.\n",
 							   formatCurrentTime(NULL,0),formatSeconds(antiParkTimeout,timeoutStr,32),formatSeconds(parkedTime,timeSpentStr,32));
+						fflush(stdout);
 					}
 					
 					timeoutCountBegin = time(NULL);
@@ -249,6 +263,7 @@ int wdAntiParkRun(struct wdAntiParkConfig *config)
 							time_t parkedTime = time(NULL) - stateTimeBegin;
 							idleTime += parkedTime;
 							printf("[%s] Switching state to IDLE. Time spent in PARKED: %s.\n",formatCurrentTime(NULL,0),formatSeconds(parkedTime,NULL,0));
+							fflush(stdout);
 						}
 						
 						// reset counters
@@ -258,6 +273,8 @@ int wdAntiParkRun(struct wdAntiParkConfig *config)
 						
 						if(config->syncBeforeIdle) {
 							printf("[%s] Syncing disks.\n",formatCurrentTime(NULL,0));
+							fflush(stdout);
+							
 							// sync disk first
 							sync();
 							sleep(1);
@@ -294,6 +311,7 @@ int wdAntiParkRun(struct wdAntiParkConfig *config)
 					printf("idle time: %s, ",formatSeconds(idleTime,NULL,0));
 					printf("%% idle: %ld%%, ",idleTime * 100 / uptime);
 					printf("est. LLC/hr: %d\n",llc_per_hour);
+					fflush(stdout);
 				}
 				
 				// change states reset timers
@@ -306,10 +324,24 @@ int wdAntiParkRun(struct wdAntiParkConfig *config)
 		// sleep for interval seconds
 		sleep(config->interval);
 	}
+	
+	if(config->verbose) {
+		printf("[%s] Shutting down. Done.\n",formatCurrentTime(NULL,0));
+	}
+	return 0;
 }
 
 int main(int argc,char *argv[])
 {
+	int daemonize = 0;
+	struct passwd *pw;
+	struct group *gr;
+	uid_t user = 0;
+	gid_t group = 0;
+	int enableLog = 0;
+	char logFile[128] = "/dev/null";
+	char pidFile[128] = "/var/run/wdantiparkd.pid";
+	
 	static struct option longOptions[] =
 	{
 		{ "help", no_argument, NULL, 'h' },
@@ -321,6 +353,11 @@ int main(int argc,char *argv[])
 		{ "parked-timeout", required_argument, NULL, 'p' },
 		{ "temp-file", required_argument, NULL, 't' },
 		{ "sync-before-idle", no_argument, NULL, 'z' },
+		{ "daemonize", no_argument, NULL, 'D' },
+		{ "user", required_argument, NULL, 'u' },
+		{ "group", required_argument, NULL, 'g' },
+		{ "log", required_argument, NULL, 'l' },
+		{ "pid-file", required_argument, NULL, 'y' },
 		{ 0, 0, 0, 0 }
     };
 
@@ -337,7 +374,7 @@ int main(int argc,char *argv[])
 	
 	int optionIndex;
 	int c;
-	while((c = getopt_long(argc,argv,"hvd:i:a:A:p:P:t:z",longOptions,&optionIndex)) != -1) {
+	while((c = getopt_long(argc,argv,"hvd:i:a:A:p:P:t:zDu:g:l:y:",longOptions,&optionIndex)) != -1) {
 		switch(c) {
 			case 'v': 
 				config.verbose = 1; 
@@ -350,7 +387,7 @@ int main(int argc,char *argv[])
 				strncpy(config.disk,optarg,16); 
 				config.disk[15] = 0; 
 				break;
-			case 'i': 
+			case 'i':
 				config.interval = strtol(optarg,NULL,10);
 				if(config.interval < 0 || config.interval > 3600) {
 					fprintf(stderr,"Invalid interval specified by -i, --interval.\n");
@@ -389,12 +426,57 @@ int main(int argc,char *argv[])
 			case 'z':
 				config.syncBeforeIdle = 1;
 				break;
+			case 'u':
+				pw = getpwnam(optarg);
+				if(!pw) {
+					fprintf(stderr,"No such user '%s'.\n",optarg);
+					return -1;
+				}
+				user = pw->pw_uid;
+				if(!user) {
+					fprintf(stderr,"Cannot specify root user for -u, --user.\n");
+					return -1;
+				}
+				break;
+			case 'g':
+				gr = getgrnam(optarg);
+				if(!gr) {
+					fprintf(stderr,"No such group '%s'.\n",optarg);
+					return -1;
+				}
+				group = gr->gr_gid;
+				if(!group) {
+					fprintf(stderr,"Cannot specify root group for -g, --group.\n");
+					return -1;
+				}
+				break;
+			case 'D':
+				daemonize = 1;
+				break;
+			case 'l':
+				if(strlen(optarg) > 127) {
+					fprintf(stderr,"Filename of -l, --log is too long.\n");
+					return -1;
+				}
+				strncpy(logFile,optarg,128);
+				logFile[127] = 0;
+				enableLog = 1;
+				config.verbose = 1;
+				break;
+			case 'y':
+				if(strlen(optarg) > 127) {
+					fprintf(stderr,"Filename of -y, --pid-file is too long.\n");
+					return -1;
+				}
+				strncpy(pidFile,optarg,128);
+				pidFile[127] = 0;
+				break;
 			default:
 				printf("wdantiparkd v1.0beta1\n");
-				printf("Usage: wdantiParkd [options...]\n");
+				printf("Usage: wdantiparkd [options...]\n");
 				printf("Options:\n");
-				printf(" -h, --help                     Display this help.\n");
-				printf(" -v, --verbose                  Be verbose.\n");
+				printf(" -h, --help                     Display this help\n");
+				printf(" -v, --verbose                  Be verbose\n");
 				printf(" -d, --disk=DISK                Disk to monitor (default: %s)\n",config.disk);
 				printf(" -i, --interval=SEC             Interval between generated disk activity (default: %d)\n",config.interval);
 				printf(" -a, --antipark-timeout=SEC     Timeout for antipark (default: %d)\n",config.antiParkTimeout);
@@ -402,10 +484,97 @@ int main(int argc,char *argv[])
 				printf(" -p, --park-timeout=SEC         Timeout for parked (default: %d)\n",config.parkedTimeout);
 				printf(" -t, --temp-file=FILE           File residing on disk to write to (default: %s)\n",config.tempFile);
 				printf(" -z, --sync-before-idle         Sync disks before switching to IDLE (default: %s)\n",config.syncBeforeIdle ? "true" : "false");
+				printf(" -D, --daemonize                Daemonize and run in the background\n");
+				printf(" -u, --user=USER                Drop privileges to user (root only)\n");
+				printf(" -g, --group=GROUP              Drop privileges to group (root only)\n");
+				printf(" -l, --log=LOGFILE              Log messages to file (default: no logging; implies -v)\n");
+				printf(" -y, --pid-file=PIDFILE         PID file when running as a daemon (default: /var/run/wdantiparkd.pid)\n");
 				return -1;
 		}
 	}
 	
+	if(daemonize) {
+		pid_t id;
+		int i;
+		int nullFd, pidFd;
+		char pidStr[32];
+		
+		id = fork();
+		if(id < 0) {
+			fprintf(stderr,"Error launching process as a daemon.\n");
+			return -1;
+		}
+		
+		if(id > 0) exit(0); // exit parent process
+		
+		setsid();
+		
+		for (i = getdtablesize(); i >= 0; --i) close(i); /* close all descriptors */
+		
+		// write pid
+		pidFd = open(pidFile,O_RDWR | O_CREAT | O_TRUNC,0640);
+		if(pidFd < 0) {
+			fprintf(stderr,"Failed to open pid file %s.\n",pidFile);
+			exit(1);
+		}
+		if(lockf(pidFd,F_TLOCK,0) < 0) {
+			fprintf(stderr,"Failed to acquire lock. Process is already running?\n");
+			exit(1);
+		}
+		
+		snprintf(pidStr,32,"%d\n",getpid());
+		pidStr[31] = 0;
+		
+		/* first instance continues */
+		sprintf(pidStr,"%d\n",getpid());
+		write(pidFd,pidStr,strlen(pidStr)); 
+		
+		nullFd = open("/dev/null",O_WRONLY);
+		dup2(nullFd,STDOUT_FILENO);
+		dup2(nullFd,STDERR_FILENO);
+		
+		umask(027);
+		
+		chdir("/");
+		
+		signal(SIGCHLD,SIG_IGN);
+		signal(SIGTSTP,SIG_IGN);
+		signal(SIGTTOU,SIG_IGN);
+		signal(SIGTTIN,SIG_IGN);
+		signal(SIGHUP,SIG_IGN); 
+	}
+	signal(SIGINT,signalHandler);
+	signal(SIGTERM,signalHandler);
+	
+	// redirect log
+	if(enableLog) {
+		int logFd;
+		logFd = open(logFile,O_WRONLY | O_CREAT | O_APPEND,0600); 
+		if(logFd < 0) {
+			logFd = open("/dev/null",O_WRONLY);
+			if(logFd) {
+				fprintf(stderr,"Error remapping stdout, stderr.\n");
+				return -1;
+			}
+		}
+		
+		dup2(logFd,STDOUT_FILENO);
+		dup2(logFd,STDERR_FILENO);
+	}
+	
+	if(group) {
+		if(setresgid(group,group,group) < 0) {
+			fprintf(stderr,"Failed to change group to gid %d, permission denied.\n",group);
+			return -1;
+		}
+	}
+	
+	if(user) {
+		if(setresuid(user,user,user) < 0) {
+			fprintf(stderr,"Failed to change user to uid %d, permission denied.\n",user);
+			return -1;
+		}
+	}
+
 	return wdAntiParkRun(&config);
 }
-

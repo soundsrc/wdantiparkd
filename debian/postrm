@@ -1,0 +1,5 @@
+#!/bin/sh
+if [ "$1" = purge ]; then
+	update-rc.d wdantiparkd remove
+	rm /etc/default/wdantiparkd
+fi

@@ -1,0 +1,11 @@
+Source: wdantiparkd
+Section: utils 
+Priority: extra
+Maintainer: Sound <sound@sagaforce.com>
+Build-Depends: debhelper (>= 7), autotools-dev
+Standards-Version: 3.7.3
+
+Package: wdantiparkd
+Architecture: any
+Depends: ${shlibs:Depends}, laptop-mode-tools
+Description: Anti-head parking daemon for WD Green Drives 

@@ -1,0 +1,77 @@
+#!/bin/sh
+update-rc.d wdantiparkd defaults
+if [ ! -e /etc/default/wdantiparkd ]; then
+	cat > /etc/default/wdantiparkd <<EOF
+# defaults for wdantiparkd
+
+# enable or disable antiparkd
+
+WDANTIPARKD_ENABLE=true
+
+
+# Additional options
+
+WDANTIPARKD_OPTS=''
+
+
+# User/group to run daemon as
+
+WDANTIPARKD_USER=nobody
+WDANTIPARKD_GROUP=nogroup
+
+# Specify the disk to monitor
+# Should be sda
+
+#WDANTIPARKD_DISK=sda
+
+
+# Specify the interval between checks for disk activity
+# Normally WD drives, you want to specify 7 seconds since the
+# heads park after 8 seconds of inactivity. If you were able
+# to extend the idle count to 25s, then 24 is a better value here.
+
+#WDANTIPARKD_INTERVAL=7
+
+
+# Minimum number of seconds for ANTIPARK timeout. The ANTIPARK
+# timeout is the number of seconds of read inactivity before
+# allowing the disk head to be PARKED. For example, if 60 seconds is
+# specified, then must wait for one minute without read activity
+# before allowing the head to park.
+
+#WDANTIPARKD_ANTIPARK_TIMEOUT=60
+
+
+# Maximum number of seconds for ANTIPARK timeout.
+
+#WDANTIPARKD_ANTIPARK_TIMEOUT_MAX=300
+
+
+# Number of seconds for the PARKED timeout.
+
+#WDANTIPARKD_PARKED_TIMEOUT=300
+
+
+# Specify a file on the filesystem which wdantiparkd will write
+# to in order to keep the disk head from parking
+
+#WDANTIPARKD_ANTIPARK_TEMP_FILE=/tmp/wdantiparkd.tmp
+
+
+# Sync disks before switching to IDLE mode.
+# This ensures that disk buffers are updated before entering
+# IDLE mode. Ofcourse, syncing disks will increase the LLC count
+# by 1 each time. This is false by default.
+
+#WDANTIPARKD_SYNC_BEFORE_IDLE=false
+
+
+# By default, logging is disabled. But if you want to see the stats,
+# you might want to enable logging.
+
+WDANTIPARKD_LOGFILE=/var/log/wdantiparkd.log
+
+EOF
+fi
+/etc/init.d/wdantiparkd start
+
