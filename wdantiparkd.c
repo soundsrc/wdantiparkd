@@ -170,20 +170,55 @@ int checkForDiskActivity(const char *disk,int *haveReadAcitvity,int *haveWriteAc
 	return 0;
 }
 
+/*
+ From: http://www.gnu.org/s/libc/manual/html_node/Elapsed-Time.html
+
+ Subtract the `struct timeval' values X and Y,
+ storing the result in RESULT.
+ Return 1 if the difference is negative, otherwise 0.  */
+
+int timeval_subtract (result, x, y)
+struct timeval *result, *x, *y;
+{
+	/* Perform the carry for the later subtraction by updating y. */
+	if (x->tv_usec < y->tv_usec) {
+		int nsec = (y->tv_usec - x->tv_usec) / 1000000 + 1;
+		y->tv_usec -= 1000000 * nsec;
+		y->tv_sec += nsec;
+	}
+	if (x->tv_usec - y->tv_usec > 1000000) {
+		int nsec = (x->tv_usec - y->tv_usec) / 1000000;
+		y->tv_usec += 1000000 * nsec;
+		y->tv_sec -= nsec;
+	}
+	
+	/* Compute the time remaining to wait.
+	 tv_usec is certainly positive. */
+	result->tv_sec = x->tv_sec - y->tv_sec;
+	result->tv_usec = x->tv_usec - y->tv_usec;
+	
+	/* Return 1 if result is negative. */
+	return x->tv_sec < y->tv_sec;
+}
+
 // the loop that does it all
 int wdAntiParkRun(struct wdAntiParkConfig *config)
 {
 	enum AntiParkState state = AntiPark;
-	time_t timeoutCountBegin, stateTimeBegin, antiParkStart, idleTime;
+	time_t timeoutCountBegin, stateTimeBegin, antiParkStart, idleTime, lastSync;
 	int llc = 0; // estimate llc
 	
 	// current antipark timeout
 	int antiParkTimeout = config->antiParkTimeout;
 	
+	struct timeval loopStartTime, loopEndTime, loopTime;
+	suseconds_t sleepFor;
+	
 	idleTime = 0; // count idle time
 	antiParkStart = time(NULL); // start time of when anti park is executed
 	timeoutCountBegin = time(NULL); // timeout timer
 	stateTimeBegin = time(NULL); // state timer
+	lastSync = time(NULL);
 	if(config->verbose) {
 		printf("[%s] Starting wdantiparkd.\n",formatCurrentTime(NULL,0));
 		printf("[%s] Settings:\n",formatCurrentTime(NULL,0));
@@ -198,6 +233,9 @@ int wdAntiParkRun(struct wdAntiParkConfig *config)
 	// infinite loop
 	while(!terminateProgram) {
 		int haveReadActivity, haveWriteActivity;
+
+		// grab
+		gettimeofday(&loopStartTime,NULL);
 		
 		// check for disk activity
 		checkForDiskActivity(config->disk,&haveReadActivity,&haveWriteActivity);
@@ -210,14 +248,18 @@ int wdAntiParkRun(struct wdAntiParkConfig *config)
 				}
 				
 				// write some random data, and sync to keep head's unparked
-				int tmpFileFp = open(config->tempFile,O_WRONLY | O_TRUNC | O_CREAT,0600);
+				int tmpFileFp = open(config->tempFile,O_WRONLY | O_TRUNC | O_CREAT | O_SYNC,0600);
 				if(tmpFileFp < 0) {
 					fprintf(stderr,"Failed to open tmp file '%s' for writing.\n",config->tempFile);
 					return -errno;
 				}
 				write(tmpFileFp,&antiParkStart,4);
 				close(tmpFileFp);
-				sync(); // force sync
+				
+				if(time(NULL) - lastSync > 30) {
+					sync(); // force sync every 30 secs
+					lastSync = time(NULL);
+				}
 				
 				if((time(NULL) - timeoutCountBegin) > antiParkTimeout) {
 					if(config->verbose) {
@@ -228,6 +270,7 @@ int wdAntiParkRun(struct wdAntiParkConfig *config)
 					stateTimeBegin = time(NULL);
 					state = Parked;
 					
+					sync();
 					sleep(1);
 
 					// sync stats
@@ -321,8 +364,15 @@ int wdAntiParkRun(struct wdAntiParkConfig *config)
 				continue;
 		}
 		
-		// sleep for interval seconds
-		sleep(config->interval);
+		gettimeofday(&loopEndTime,NULL);
+		
+		// compute the time the loop took
+		timeval_subtract(&loopTime,&loopEndTime,&loopStartTime);
+		
+		// sleep for interval seconds minus loop time
+		sleepFor = (config->interval * 1000000) - (loopTime.tv_sec * 1000000 + loopTime.tv_usec);
+		if((useconds_t)sleepFor < config->interval * 1000000)
+			usleep(sleepFor);
 	}
 	
 	if(config->verbose) {
