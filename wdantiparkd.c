@@ -291,7 +291,7 @@ int wdAntiParkRun(struct wdAntiParkConfig *config)
 						char timeoutStr[32], timeSpentStr[32];
 						time_t parkedTime = time(NULL) - stateTimeBegin;
 						idleTime += parkedTime;
-						printf("[%s] Disk activity detected, switching out of PARKED state to ANTIPARK with timeout: %s. Time spent in PARKED: %s.\n",
+						printf("[%s] Switching state to ANTIPARK with timeout: %s. Time spent in PARKED: %s.\n",
 							   formatCurrentTime(NULL,0),formatSeconds(antiParkTimeout,timeoutStr,32),formatSeconds(parkedTime,timeSpentStr,32));
 						fflush(stdout);
 					}
@@ -345,15 +345,15 @@ int wdAntiParkRun(struct wdAntiParkConfig *config)
 					char timeoutStr[32], timeSpentStr[32];
 					time_t parkedTime = time(NULL) - stateTimeBegin;
 					time_t uptime = time(NULL) - antiParkStart;
-					int hours = (uptime / 3600);
-					int llc_per_hour = hours ? llc / hours : llc;
+					double hours = (uptime / 3600.0f);
+					double llcPerHour = hours >= 0.0f ? (llc / hours) : llc;
 					idleTime += parkedTime;
-					printf("[%s] Disk activity detected, switching out of IDLE state to ANTIPARK with timeout: %s. Time spent in IDLE: %s.\n",
+					printf("[%s] Switch state to ANTIPARK with timeout: %s. Time spent in IDLE: %s.\n",
 						   formatCurrentTime(NULL,0),formatSeconds(antiParkTimeout,timeoutStr,32),formatSeconds(parkedTime,timeSpentStr,32));
 					printf("[%s] Current stats - uptime: %s, ",formatCurrentTime(NULL,0),formatSeconds(uptime,NULL,0));
 					printf("idle time: %s, ",formatSeconds(idleTime,NULL,0));
 					printf("%% idle: %ld%%, ",idleTime * 100 / uptime);
-					printf("est. LLC/hr: %d\n",llc_per_hour);
+					printf("est. LLC/hr: %.2g\n",llcPerHour);
 					fflush(stdout);
 				}
 				
